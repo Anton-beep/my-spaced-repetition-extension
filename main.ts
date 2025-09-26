@@ -1,32 +1,67 @@
-import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting } from 'obsidian';
-
-// Remember to rename these classes and interfaces!
+import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile } from 'obsidian';
+import isSubPath from 'utils/isSubPath';
 
 interface MyPluginSettings {
-	mySetting: string;
+	conceptsPaths: string;
+	flashcardsPaths: string;
+	flashcardContentsPaths: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
-	mySetting: 'default'
+	conceptsPaths: 'this/is/an/example/concepts/',
+	flashcardsPaths: 'this/is/an/example/flashcards/',
+	flashcardContentsPaths: 'flashcardsTemplates/template.md'
 }
+
+
 
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
+	isFileInConcepts(filePath: string): boolean {
+		return this.settings.conceptsPaths.split(" ").some((p: string) => isSubPath(p, filePath))
+	}
+
+	getConceptPathIndex(filePath: string): number {
+		return this.settings.conceptsPaths.split(" ").findIndex((p: string) => isSubPath(p, filePath))
+	}
+
+
 	async onload() {
 		await this.loadSettings();
 
-		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (_evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
-		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		this.registerEvent(this.app.vault.on('rename', async (file, oldPath) => {
+			let ind = this.getConceptPathIndex(file.path)
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+			if (ind != -1) {
+				let oldName = oldPath.split("/").slice(-1)[0]
+
+				if (oldName === "Untitled.md") {
+					// This is a new concept
+					let fileContent = this.app.vault.getAbstractFileByPath(this.settings.flashcardContentsPaths.split(" ")[ind])
+					let data: string = ""
+
+					if (fileContent instanceof TFile) {
+						data = await this.app.vault.cachedRead(fileContent)
+					} else {
+						new Notice("Could not read content for flashcard at " + this.settings.flashcardContentsPaths.split(" ")[ind])
+					}
+
+					let newFilePath = this.settings.flashcardsPaths.split(" ")[ind] + "F " + file.name
+					this.app.vault.create(newFilePath, data)
+				} else {
+					// This is a rename of an existing concept
+
+					let oldFlashcardFile = this.app.vault.getAbstractFileByPath(this.settings.flashcardsPaths.split(" ")[ind] + "F " + oldName)
+					if (!(oldFlashcardFile instanceof TFile)) {
+						new Notice("Could not find flashcard file to rename at " + this.settings.flashcardsPaths.split(" ")[ind] + "F " + oldName)
+						return
+					}
+
+					this.app.vault.rename(oldFlashcardFile, this.settings.flashcardsPaths.split(" ")[ind] + "F " + file.name)
+				}
+			}
+		}))
 
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
@@ -97,12 +132,12 @@ class SampleModal extends Modal {
 	}
 
 	onOpen() {
-		const {contentEl} = this;
+		const { contentEl } = this;
 		contentEl.setText('Woah!');
 	}
 
 	onClose() {
-		const {contentEl} = this;
+		const { contentEl } = this;
 		contentEl.empty();
 	}
 }
@@ -116,18 +151,40 @@ class SampleSettingTab extends PluginSettingTab {
 	}
 
 	display(): void {
-		const {containerEl} = this;
+		const { containerEl } = this;
 
 		containerEl.empty();
 
 		new Setting(containerEl)
-			.setName('Setting #1')
-			.setDesc('It\'s a secret')
-			.addText(text => text
-				.setPlaceholder('Enter your secret')
-				.setValue(this.plugin.settings.mySetting)
+			.setName('Concepts Paths')
+			.setDesc('Space-separated list of paths to watch for concept files')
+			.addTextArea(text => text
+				.setPlaceholder('Enter paths')
+				.setValue(this.plugin.settings.conceptsPaths)
 				.onChange(async (value) => {
-					this.plugin.settings.mySetting = value;
+					this.plugin.settings.conceptsPaths = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Flashcards Paths')
+			.setDesc('Space-separated list of paths to watch for flashcard files. NOTE: this array must correspond to the Concepts Paths array above, i.e. they must have the same number of elements, and the nth element in this array corresponds to the nth element in the Concepts Paths array.')
+			.addTextArea(text => text
+				.setPlaceholder('Enter paths')
+				.setValue(this.plugin.settings.flashcardsPaths)
+				.onChange(async (value) => {
+					this.plugin.settings.flashcardsPaths = value;
+					await this.plugin.saveSettings();
+				}));
+
+		new Setting(containerEl)
+			.setName('Flashcard Contents Paths')
+			.setDesc('Space-separated list of paths to watch for flashcard contents files. NOTE: this array must correspond to the Concepts Paths array above, i.e. they must have the same number of elements, and the nth element in this array corresponds to the nth element in the Concepts Paths array.')
+			.addTextArea(text => text
+				.setPlaceholder('Enter paths')
+				.setValue(this.plugin.settings.flashcardContentsPaths)
+				.onChange(async (value) => {
+					this.plugin.settings.flashcardContentsPaths = value;
 					await this.plugin.saveSettings();
 				}));
 	}

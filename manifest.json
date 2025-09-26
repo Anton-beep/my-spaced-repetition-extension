@@ -1,11 +1,9 @@
 {
-	"id": "sample-plugin",
-	"name": "Sample Plugin",
+	"id": "my-spaced-repetition-extension",
+	"name": "My Spaced Repetition Extension",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Extends the spaced repetition plugin with features needed for me",
+	"author": "Anton-Beep",
 	"isDesktopOnly": false
 }
