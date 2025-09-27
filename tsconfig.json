@@ -16,7 +16,11 @@
       "ES5",
       "ES6",
       "ES7"
-    ]
+    ],
+	"types": [
+		"obsidian-typings"
+	],
+	"allowSyntheticDefaultImports": true,
   },
   "include": [
     "**/*.ts"
