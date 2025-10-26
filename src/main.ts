@@ -5,14 +5,12 @@ import matter from "gray-matter";
 interface MyPluginSettings {
 	conceptsPaths: string;
 	flashcardsPaths: string;
-	flashcardContentsPaths: string;
 	flashcardTags: string;
 }
 
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	conceptsPaths: 'this/is/an/example/concepts/',
 	flashcardsPaths: 'this/is/an/example/flashcards/',
-	flashcardContentsPaths: 'flashcardsTemplates/template.md',
 	flashcardTags: '#flashcard/subject/gen'
 }
 
@@ -90,6 +88,17 @@ export default class MyPlugin extends Plugin {
 		}
 	}
 
+	async fixFlashcardFor(flashcardFile: TFile, conceptFile: TFile) {
+		const parsed = matter(await this.app.vault.cachedRead(flashcardFile))
+
+		const expectedLinkPath = "[[" + this.app.metadataCache.fileToLinktext(conceptFile, flashcardFile.path) + "]]"
+
+		if (parsed.data["flashcard-for"] !== expectedLinkPath) {
+			parsed.data["flashcard-for"] = expectedLinkPath
+			await this.app.vault.process(flashcardFile, () => matter.stringify(parsed.content, parsed.data))
+		}
+	}
+
 	getFlashcardNameFromConcept(conceptName: string): string {
 		return "F " + conceptName
 	}
@@ -137,45 +146,67 @@ export default class MyPlugin extends Plugin {
 
 			if (!(flashcardFile instanceof TFile)) {
 				// Flashcard file does not exist
+				if (file.name === "Untitled.md") {
+					return
+				}
+
 				new Notice("Flashcard file does not exist at " + flashcardPath)
 				return
 			}
 
 			await this.fixTagsInFlashcard(flashcardFile, file)
+			await this.fixFlashcardFor(flashcardFile, file)
 		}))
 
 		this.registerEvent(this.app.vault.on('rename', async (file, oldPath) => {
 			const ind = this.getConceptPathIndex(file.path)
 
-			if (ind != -1) {
-				const oldName = oldPath.split("/").slice(-1)[0]
+			if (ind === -1) {
+				return
+			}
 
-				if (oldName === "Untitled.md") {
-					// This is a new concept
-					const flashcardPath = this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name)
-					const fileContent = this.app.vault.getAbstractFileByPath(flashcardPath)
-					let data = ""
+			const oldName = oldPath.split("/").slice(-1)[0]
 
-					if (fileContent instanceof TFile) {
-						data = await this.app.vault.cachedRead(fileContent)
-					} else {
-						new Notice("Could not read content for flashcard at " + flashcardPath)
-					}
+			if (oldName === "Untitled.md") {
+				// This is a new concept
+				const flashcardPath = this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name)
+				const fileContent = this.app.vault.getAbstractFileByPath(flashcardPath)
+				let data = ""
 
-					const newFilePath = this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name)
-					this.app.vault.create(newFilePath, data)
+				if (fileContent instanceof TFile) {
+					data = await this.app.vault.cachedRead(fileContent)
 				} else {
-					// This is a rename of an existing concept
-
-					console.log(this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(oldName))
-					const oldFlashcardFile = this.app.vault.getAbstractFileByPath(this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(oldName))
-					if (!(oldFlashcardFile instanceof TFile)) {
-						new Notice("Could not find flashcard file to rename at " + this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(oldName))
-						return
-					}
-
-					this.app.vault.rename(oldFlashcardFile, this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name))
+					// new Notice("Could not read content for flashcard at " + flashcardPath)
 				}
+
+				const newFilePath = this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name)
+
+				const flashcardFile = await this.app.vault.create(newFilePath, data)
+
+				if (!(file instanceof TFile)) {
+					return
+				}
+				await this.fixTagsInFlashcard(flashcardFile, file)
+				await this.fixFlashcardFor(flashcardFile, file)
+			} else {
+				// This is a rename of an existing concept
+
+				const oldFlashcardFile = this.app.vault.getAbstractFileByPath(this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(oldName))
+				if (!(oldFlashcardFile instanceof TFile)) {
+					new Notice("Could not find flashcard file to rename at " + this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(oldName))
+					return
+				}
+
+				if (!(file instanceof TFile)) {
+					return
+				}
+
+				await this.fixTagsInFlashcard(oldFlashcardFile, file)
+
+				// The delay before is needed for Obsidian to update links before the file renames, probably there is a better way to do this, but this works as it is not time critical
+				setTimeout(async () => {
+					await this.app.vault.rename(oldFlashcardFile, this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name))
+				}, 1000)
 			}
 		}))
 
@@ -189,8 +220,6 @@ export default class MyPlugin extends Plugin {
 					}
 
 					const folder = this.app.vault.getAbstractFileByPath(el)
-
-					console.log(folder)
 
 					if (!(folder instanceof TAbstractFile)) {
 						new Notice("Could not find concept folder at " + el)
@@ -216,6 +245,7 @@ export default class MyPlugin extends Plugin {
 						}
 
 						await this.fixTagsInFlashcard(flashcardFile, file)
+						await this.fixFlashcardFor(flashcardFile, file)
 					}
 				}
 			}
@@ -270,17 +300,6 @@ class SampleSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.flashcardsPaths)
 				.onChange(async (value) => {
 					this.plugin.settings.flashcardsPaths = value;
-					await this.plugin.saveSettings();
-				}));
-
-		new Setting(containerEl)
-			.setName('Flashcard Contents Paths')
-			.setDesc('Space-separated list of paths to watch for flashcard contents files. NOTE: this array must correspond to the Concepts Paths array above, i.e. they must have the same number of elements, and the nth element in this array corresponds to the nth element in the Concepts Paths array.')
-			.addTextArea(text => text
-				.setPlaceholder('Enter paths')
-				.setValue(this.plugin.settings.flashcardContentsPaths)
-				.onChange(async (value) => {
-					this.plugin.settings.flashcardContentsPaths = value;
 					await this.plugin.saveSettings();
 				}));
 
