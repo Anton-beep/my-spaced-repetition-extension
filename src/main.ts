@@ -17,6 +17,20 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
+	async isNoFlashcardConcept(conceptFile: TAbstractFile): Promise<boolean> {
+		// This function checks if a concept file has a property "no-flashcard" equal to true in its frontmatter
+		if (!(conceptFile instanceof TFile)) {
+			throw new Error("File is not a TFile")
+		}
+
+		const parsed = matter(await this.app.vault.cachedRead(conceptFile))
+		if (!parsed.data["no-flashcard"]) {
+			return false
+		}
+
+		return parsed.data["no-flashcard"] === true
+	}
+
 	isFileInConcepts(filePath: string): boolean {
 		return this.settings.conceptsPaths.split(" ").some((p: string) => isSubPath(p, filePath))
 	}
@@ -62,7 +76,15 @@ export default class MyPlugin extends Plugin {
 		let needToWrite = false;
 		let tagsValid = false;
 
-		const depth = this.getDepthOfConcept(conceptFile)
+		var depth: number;
+
+		try {
+			depth = this.getDepthOfConcept(conceptFile)
+		} catch (e) {
+			console.error("Error calculating depth of concept for file " + conceptFile.path + ": " + e)
+			new Notice("Error calculating depth of concept for file " + conceptFile.path + ": " + e)
+			return
+		}
 
 		for (let i = 0; i < parsed.data.tags.length; i++) {
 			const flashcardTag = this.getCorrespondingFlashcardTag(conceptFile.path)
@@ -141,6 +163,10 @@ export default class MyPlugin extends Plugin {
 				return
 			}
 
+			if (await this.isNoFlashcardConcept(file)) {
+				return
+			}
+
 			const flashcardPath = this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name)
 			const flashcardFile = this.app.vault.getAbstractFileByPath(flashcardPath)
 
@@ -159,6 +185,10 @@ export default class MyPlugin extends Plugin {
 		}))
 
 		this.registerEvent(this.app.vault.on('rename', async (file, oldPath) => {
+			if (await this.isNoFlashcardConcept(file)) {
+				return
+			}
+
 			const ind = this.getConceptPathIndex(file.path)
 
 			if (ind === -1) {
@@ -236,6 +266,10 @@ export default class MyPlugin extends Plugin {
 							continue
 						}
 
+						if (await this.isNoFlashcardConcept(file)) {
+							continue
+						}
+
 						const flashcardPath = this.getCorrespondingFlashcardPath(file.path) + this.getFlashcardNameFromConcept(file.name)
 
 						const flashcardFile = this.app.vault.getAbstractFileByPath(flashcardPath)
@@ -248,6 +282,8 @@ export default class MyPlugin extends Plugin {
 						await this.fixFlashcardFor(flashcardFile, file)
 					}
 				}
+
+				new Notice("Finished checking links and tags in all flashcards")
 			}
 		})
 
